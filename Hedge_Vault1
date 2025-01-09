@@ -1,0 +1,63 @@
+## HEDGE VAULT 
+
+import ccxt
+import pandas as pd
+import numpy as np
+from scipy.stats import norm
+from pypfopt import EfficientFrontier, expected_returns, risk_models
+
+# Step 1: Data Acquisition
+def fetch_btc_data():
+    exchange = ccxt.binance()
+    btc_data = exchange.fetch_ohlcv('BTC/USDT', timeframe='1d', limit=365)
+    btc_df = pd.DataFrame(btc_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    btc_df['timestamp'] = pd.to_datetime(btc_df['timestamp'], unit='ms')
+    btc_df.set_index('timestamp', inplace=True)
+    return btc_df
+
+# Step 2: Portfolio Construction
+def optimize_portfolio(btc_df):
+    mu = expected_returns.mean_historical_return(btc_df['close'])
+    S = risk_models.sample_cov(btc_df['close'])
+    ef = EfficientFrontier(mu, S)
+    weights = ef.max_sharpe()
+    cleaned_weights = ef.clean_weights()
+    return cleaned_weights
+
+# Step 3: Risk Sensitivities Calculation
+def calculate_greeks(S, K, T, r, sigma):
+    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    delta = norm.cdf(d1)
+    gamma = norm.pdf(d1) / (S * sigma * np.sqrt(T))
+    theta = (-S * norm.pdf(d1) * sigma / (2 * np.sqrt(T)) - r * K * np.exp(-r * T) * norm.cdf(d1))
+    vega = S * norm.pdf(d1) * np.sqrt(T)
+    return delta, gamma, theta, vega
+
+# Step 4: Risk Management
+def hedge_portfolio(delta_position, delta_hedge):
+    hedge_amount = delta_position - delta_hedge
+    return hedge_amount
+
+# Main Execution Flow
+btc_df = fetch_btc_data()
+cleaned_weights = optimize_portfolio(btc_df)
+
+# Example parameters for Greeks calculation
+S = btc_df['close'].iloc[-1]  # Current price of BTC
+K = 31000  # Strike price of option
+T = 30 / 365  # Time to expiration in years
+r = 0.01   # Risk-free rate
+sigma = 0.7  # Volatility
+
+greeks = calculate_greeks(S, K, T, r, sigma)
+
+# Calculate delta exposure and hedge position
+delta_position = cleaned_weights['BTC/USDT'] * greeks[0]  # Position's delta exposure
+delta_hedge = greeks[0]  # Delta from hedging instrument
+hedged_amount = hedge_portfolio(delta_position, delta_hedge)
+
+# Output results
+print("Optimized Weights:", cleaned_weights)
+print(f"Delta: {greeks[0]}, Gamma: {greeks[1]}, Theta: {greeks[2]}, Vega: {greeks[3]}")
+print(f"Hedged Amount: {hedged_amount}")
+
